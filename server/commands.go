@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pborman/uuid"
 	"github.com/temporalio/cli/common"
@@ -139,6 +140,14 @@ func NewServerCommands(defaultCfg *sconfig.Config) []*cli.Command {
 				&cli.StringSliceFlag{
 					Name:  common.FlagDynamicConfigValue,
 					Usage: `Dynamic config value, as KEY=JSON_VALUE (string values need quotes)`,
+				},
+				&cli.StringFlag{
+					Name:  common.FlagTaskPollExpiration,
+					Usage: `Max time server will wait for poll to receive task (can be <task-queue>=<duration> to be task-queue specific)`,
+				},
+				&cli.StringFlag{
+					Name:  common.FlagTaskNotifyURL,
+					Usage: `URL to POST to when a new task is available (can be <task-queue>=<url> to be task-queue specific)`,
 				},
 			},
 			Before: func(c *cli.Context) error {
@@ -317,6 +326,20 @@ func NewServerCommands(defaultCfg *sconfig.Config) []*cli.Command {
 					return err
 				}
 
+				if taskPollExpiration := c.String(common.FlagTaskPollExpiration); taskPollExpiration != "" {
+					taskQueue, durStr := trimTaskQueueFlagPrefix(taskPollExpiration)
+					dur, err := time.ParseDuration(durStr)
+					if err != nil {
+						return fmt.Errorf("expire duration %v invalid: %w", durStr, err)
+					}
+					opts = append(opts, WithTaskPollExpiration(taskQueue, dur))
+				}
+
+				if taskNotifyURL := c.String(common.FlagTaskNotifyURL); taskNotifyURL != "" {
+					taskQueue, url := trimTaskQueueFlagPrefix(taskNotifyURL)
+					opts = append(opts, WithTaskNotifyURL(taskQueue, url))
+				}
+
 				if _, ok := configVals[dynamicconfig.ForceSearchAttributesCacheRefreshOnRead]; !ok {
 					opts = append(opts, WithSearchAttributeCacheDisabled())
 				}
@@ -341,6 +364,15 @@ func NewServerCommands(defaultCfg *sconfig.Config) []*cli.Command {
 			},
 		},
 	}
+}
+
+func trimTaskQueueFlagPrefix(flagValue string) (taskQueue string, remaining string) {
+	if pieces := strings.SplitN(flagValue, "=", 2); len(pieces) == 1 {
+		remaining = pieces[0]
+	} else {
+		taskQueue, remaining = pieces[0], pieces[1]
+	}
+	return
 }
 
 func getPragmaMap(input []string) (map[string]string, error) {

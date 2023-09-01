@@ -21,7 +21,7 @@ require (
 	go.temporal.io/sdk/contrib/tools/workflowcheck v0.1.0
 	go.temporal.io/server v1.22.0-rc1
 	go.uber.org/zap v1.25.0
-	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1
+	golang.org/x/exp v0.0.0-20230728194245-b0cb94b80691
 	google.golang.org/grpc v1.57.0
 )
 
@@ -159,3 +159,5 @@ require (
 )
 
 replace github.com/grpc-ecosystem/grpc-gateway => github.com/temporalio/grpc-gateway v1.17.0
+
+replace go.temporal.io/server => ../temporal

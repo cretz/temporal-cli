@@ -104,6 +104,8 @@ var (
 	FlagSkipBaseIsNotCurrent       = "skip-base-is-not-current"
 	FlagSkipCurrentOpen            = "skip-current-open"
 	FlagStartTime                  = "start-time"
+	FlagTaskNotifyURL              = "task-notify-url"
+	FlagTaskPollExpiration         = "task-poll-expiration"
 	FlagTaskQueue                  = "task-queue"
 	FlagTaskQueueAlias             = []string{"t"}
 	FlagTaskQueueType              = "task-queue-type"

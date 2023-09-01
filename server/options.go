@@ -27,6 +27,8 @@
 package server
 
 import (
+	"time"
+
 	sconfig "github.com/temporalio/cli/server/config"
 	"go.temporal.io/server/common/config"
 	"go.temporal.io/server/common/dynamicconfig"
@@ -184,6 +186,28 @@ func WithPersistenceQPS() ServerOption {
 		dynamicconfig.FrontendPersistenceMaxQPS,
 		[]dynamicconfig.ConstrainedValue{{Value: 10000}},
 	)
+}
+
+// WithTaskNotifyURL sets URL to be POSTed to on task spool. Task queue is
+// optional.
+func WithTaskNotifyURL(taskQueue string, url string) ServerOption {
+	return WithDynamicConfigValue(
+		dynamicconfig.MatchingTaskNotifyURL,
+		[]dynamicconfig.ConstrainedValue{{
+			Constraints: dynamicconfig.Constraints{TaskQueueName: taskQueue},
+			Value:       url,
+		}})
+}
+
+// WithTaskPollExpiration sets max time to wait for worker task poll to get a
+// task. Task queue is optional.
+func WithTaskPollExpiration(taskQueue string, duration time.Duration) ServerOption {
+	return WithDynamicConfigValue(
+		dynamicconfig.MatchingLongPollExpirationInterval,
+		[]dynamicconfig.ConstrainedValue{{
+			Constraints: dynamicconfig.Constraints{TaskQueueName: taskQueue},
+			Value:       duration,
+		}})
 }
 
 type applyFuncContainer struct {
