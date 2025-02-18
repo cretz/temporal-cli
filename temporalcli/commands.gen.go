@@ -36,34 +36,20 @@ type ClientOptions struct {
 
 func (v *ClientOptions) buildFlags(cctx *CommandContext, f *pflag.FlagSet) {
 	f.StringVar(&v.Address, "address", "127.0.0.1:7233", "Temporal Service gRPC endpoint.")
-	cctx.BindFlagEnvVar(f.Lookup("address"), "TEMPORAL_ADDRESS")
 	f.StringVarP(&v.Namespace, "namespace", "n", "default", "Temporal Service Namespace.")
-	cctx.BindFlagEnvVar(f.Lookup("namespace"), "TEMPORAL_NAMESPACE")
 	f.StringVar(&v.ApiKey, "api-key", "", "API key for request.")
-	cctx.BindFlagEnvVar(f.Lookup("api-key"), "TEMPORAL_API_KEY")
-	f.StringArrayVar(&v.GrpcMeta, "grpc-meta", nil, "HTTP headers for requests. format as a `KEY=VALUE` pair May be passed multiple times to set multiple headers.")
-	f.BoolVar(&v.Tls, "tls", false, "Enable base TLS encryption. Does not have additional options like mTLS or client certs.")
-	cctx.BindFlagEnvVar(f.Lookup("tls"), "TEMPORAL_TLS")
+	f.StringArrayVar(&v.GrpcMeta, "grpc-meta", nil, "HTTP headers for requests. format as a `KEY=VALUE` pair May be passed multiple times to set multiple headers. Can also be made available via environment variable as `TEMPORAL_GRPC_META_[name]`.")
+	f.BoolVar(&v.Tls, "tls", false, "Enable base TLS encryption. Does not have additional options like mTLS or client certs. Unlike some other options, if this is present and set explicitly to false, it can still be overridden by config file or environment variables.")
 	f.StringVar(&v.TlsCertPath, "tls-cert-path", "", "Path to x509 certificate. Can't be used with --tls-cert-data.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-cert-path"), "TEMPORAL_TLS_CERT")
 	f.StringVar(&v.TlsCertData, "tls-cert-data", "", "Data for x509 certificate. Can't be used with --tls-cert-path.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-cert-data"), "TEMPORAL_TLS_CERT_DATA")
 	f.StringVar(&v.TlsKeyPath, "tls-key-path", "", "Path to x509 private key. Can't be used with --tls-key-data.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-key-path"), "TEMPORAL_TLS_KEY")
 	f.StringVar(&v.TlsKeyData, "tls-key-data", "", "Private certificate key data. Can't be used with --tls-key-path.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-key-data"), "TEMPORAL_TLS_KEY_DATA")
 	f.StringVar(&v.TlsCaPath, "tls-ca-path", "", "Path to server CA certificate. Can't be used with --tls-ca-data.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-ca-path"), "TEMPORAL_TLS_CA")
 	f.StringVar(&v.TlsCaData, "tls-ca-data", "", "Data for server CA certificate. Can't be used with --tls-ca-path.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-ca-data"), "TEMPORAL_TLS_CA_DATA")
 	f.BoolVar(&v.TlsDisableHostVerification, "tls-disable-host-verification", false, "Disable TLS host-name verification.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-disable-host-verification"), "TEMPORAL_TLS_DISABLE_HOST_VERIFICATION")
 	f.StringVar(&v.TlsServerName, "tls-server-name", "", "Override target TLS server name.")
-	cctx.BindFlagEnvVar(f.Lookup("tls-server-name"), "TEMPORAL_TLS_SERVER_NAME")
 	f.StringVar(&v.CodecEndpoint, "codec-endpoint", "", "Remote Codec Server endpoint.")
-	cctx.BindFlagEnvVar(f.Lookup("codec-endpoint"), "TEMPORAL_CODEC_ENDPOINT")
 	f.StringVar(&v.CodecAuth, "codec-auth", "", "Authorization header for Codec Server requests.")
-	cctx.BindFlagEnvVar(f.Lookup("codec-auth"), "TEMPORAL_CODEC_AUTH")
 }
 
 type OverlapPolicyOptions struct {
@@ -185,7 +171,8 @@ type WorkflowStartOptions struct {
 }
 
 func (v *WorkflowStartOptions) buildFlags(cctx *CommandContext, f *pflag.FlagSet) {
-	f.StringVar(&v.Cron, "cron", "", "Cron schedule for the Workflow. Deprecated. Use Schedules instead.")
+	f.StringVar(&v.Cron, "cron", "", "Cron schedule for the Workflow.")
+	_ = f.MarkDeprecated("cron", "Use Schedules instead.")
 	f.BoolVar(&v.FailExisting, "fail-existing", false, "Fail if the Workflow already exists.")
 	v.StartDelay = 0
 	f.Var(&v.StartDelay, "start-delay", "Delay before starting the Workflow Execution. Can't be used with cron schedules. If the Workflow receives a signal or update prior to this time, the Workflow Execution starts immediately.")
@@ -270,6 +257,10 @@ type TemporalCommand struct {
 	Command                 cobra.Command
 	Env                     string
 	EnvFile                 string
+	ConfigFile              string
+	Profile                 string
+	DisableConfigFile       bool
+	DisableConfigEnv        bool
 	LogLevel                StringEnum
 	LogFormat               StringEnum
 	Output                  StringEnum
@@ -291,6 +282,7 @@ func NewTemporalCommand(cctx *CommandContext) *TemporalCommand {
 	s.Command.Args = cobra.NoArgs
 	s.Command.AddCommand(&NewTemporalActivityCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalBatchCommand(cctx, &s).Command)
+	s.Command.AddCommand(&NewTemporalConfigCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalEnvCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalOperatorCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalScheduleCommand(cctx, &s).Command)
@@ -299,7 +291,13 @@ func NewTemporalCommand(cctx *CommandContext) *TemporalCommand {
 	s.Command.AddCommand(&NewTemporalWorkflowCommand(cctx, &s).Command)
 	s.Command.PersistentFlags().StringVar(&s.Env, "env", "default", "Active environment name (`ENV`).")
 	cctx.BindFlagEnvVar(s.Command.PersistentFlags().Lookup("env"), "TEMPORAL_ENV")
+	_ = s.Command.PersistentFlags().MarkDeprecated("env", "Use `profile` instead. If an env file is present, it will take\nprecedent over `config` file or config environment variables.\n")
 	s.Command.PersistentFlags().StringVar(&s.EnvFile, "env-file", "", "Path to environment settings file. Defaults to `$HOME/.config/temporalio/temporal.yaml`.")
+	_ = s.Command.PersistentFlags().MarkDeprecated("env-file", "Use `config-file` instead. If an env file is present, it will take\nprecedent over `config` file or config environment variables.\n")
+	s.Command.PersistentFlags().StringVar(&s.ConfigFile, "config-file", "", "File path to read TOML config from, defaults to `$CONFIG_PATH/temporal/temporal.toml` where `$CONFIG_PATH` is defined as `$HOME/.config` on Unix, \"$HOME/Library/Application Support\" on macOS, and %AppData% on Windows.")
+	s.Command.PersistentFlags().StringVar(&s.Profile, "profile", "", "Profile to use for config file.")
+	s.Command.PersistentFlags().BoolVar(&s.DisableConfigFile, "disable-config-file", false, "If set, disables loading environment config from config file.")
+	s.Command.PersistentFlags().BoolVar(&s.DisableConfigEnv, "disable-config-env", false, "If set, disables loading environment config from environment variables.")
 	s.LogLevel = NewStringEnum([]string{"debug", "info", "warn", "error", "never"}, "info")
 	s.Command.PersistentFlags().Var(&s.LogLevel, "log-level", "Log level. Default is \"info\" for most commands and \"warn\" for `server start-dev`. Accepted values: debug, info, warn, error, never.")
 	s.LogFormat = NewStringEnum([]string{"text", "json", "pretty"}, "text")
@@ -693,6 +691,119 @@ func NewTemporalBatchTerminateCommand(cctx *CommandContext, parent *TemporalBatc
 	return &s
 }
 
+type TemporalConfigCommand struct {
+	Parent  *TemporalCommand
+	Command cobra.Command
+}
+
+func NewTemporalConfigCommand(cctx *CommandContext, parent *TemporalCommand) *TemporalConfigCommand {
+	var s TemporalConfigCommand
+	s.Parent = parent
+	s.Command.Use = "config"
+	s.Command.Short = "Manage config files"
+	s.Command.Long = "TODO"
+	s.Command.Args = cobra.NoArgs
+	s.Command.AddCommand(&NewTemporalConfigDeleteCommand(cctx, &s).Command)
+	s.Command.AddCommand(&NewTemporalConfigGetCommand(cctx, &s).Command)
+	s.Command.AddCommand(&NewTemporalConfigListCommand(cctx, &s).Command)
+	s.Command.AddCommand(&NewTemporalConfigSetCommand(cctx, &s).Command)
+	return &s
+}
+
+type TemporalConfigDeleteCommand struct {
+	Parent  *TemporalConfigCommand
+	Command cobra.Command
+	Prop    string
+}
+
+func NewTemporalConfigDeleteCommand(cctx *CommandContext, parent *TemporalConfigCommand) *TemporalConfigDeleteCommand {
+	var s TemporalConfigDeleteCommand
+	s.Parent = parent
+	s.Command.DisableFlagsInUseLine = true
+	s.Command.Use = "delete [flags]"
+	s.Command.Short = "Delete a config file property or an entire config profile"
+	s.Command.Long = "TODO: Also document how this will remove comments and other things"
+	s.Command.Args = cobra.NoArgs
+	s.Command.Flags().StringVarP(&s.Prop, "prop", "p", "", "Specific property to delete.")
+	s.Command.Run = func(c *cobra.Command, args []string) {
+		if err := s.run(cctx, args); err != nil {
+			cctx.Options.Fail(err)
+		}
+	}
+	return &s
+}
+
+type TemporalConfigGetCommand struct {
+	Parent  *TemporalConfigCommand
+	Command cobra.Command
+	Prop    string
+}
+
+func NewTemporalConfigGetCommand(cctx *CommandContext, parent *TemporalConfigCommand) *TemporalConfigGetCommand {
+	var s TemporalConfigGetCommand
+	s.Parent = parent
+	s.Command.DisableFlagsInUseLine = true
+	s.Command.Use = "get [flags]"
+	s.Command.Short = "Show config file properties"
+	s.Command.Long = "TODO"
+	s.Command.Args = cobra.NoArgs
+	s.Command.Flags().StringVarP(&s.Prop, "prop", "p", "", "Specific property to get.")
+	s.Command.Run = func(c *cobra.Command, args []string) {
+		if err := s.run(cctx, args); err != nil {
+			cctx.Options.Fail(err)
+		}
+	}
+	return &s
+}
+
+type TemporalConfigListCommand struct {
+	Parent  *TemporalConfigCommand
+	Command cobra.Command
+}
+
+func NewTemporalConfigListCommand(cctx *CommandContext, parent *TemporalConfigCommand) *TemporalConfigListCommand {
+	var s TemporalConfigListCommand
+	s.Parent = parent
+	s.Command.DisableFlagsInUseLine = true
+	s.Command.Use = "list [flags]"
+	s.Command.Short = "Show config file profiles"
+	s.Command.Long = "TODO"
+	s.Command.Args = cobra.NoArgs
+	s.Command.Run = func(c *cobra.Command, args []string) {
+		if err := s.run(cctx, args); err != nil {
+			cctx.Options.Fail(err)
+		}
+	}
+	return &s
+}
+
+type TemporalConfigSetCommand struct {
+	Parent  *TemporalConfigCommand
+	Command cobra.Command
+	Prop    string
+	Value   string
+}
+
+func NewTemporalConfigSetCommand(cctx *CommandContext, parent *TemporalConfigCommand) *TemporalConfigSetCommand {
+	var s TemporalConfigSetCommand
+	s.Parent = parent
+	s.Command.DisableFlagsInUseLine = true
+	s.Command.Use = "set [flags]"
+	s.Command.Short = "Set config file properties"
+	s.Command.Long = "TODO"
+	s.Command.Args = cobra.NoArgs
+	s.Command.Flags().StringVarP(&s.Prop, "prop", "p", "", "Property name. Required.")
+	_ = cobra.MarkFlagRequired(s.Command.Flags(), "prop")
+	s.Command.Flags().StringVarP(&s.Value, "value", "v", "", "Property value. Required.")
+	_ = cobra.MarkFlagRequired(s.Command.Flags(), "value")
+	s.Command.Run = func(c *cobra.Command, args []string) {
+		if err := s.run(cctx, args); err != nil {
+			cctx.Options.Fail(err)
+		}
+	}
+	return &s
+}
+
 type TemporalEnvCommand struct {
 	Parent  *TemporalCommand
 	Command cobra.Command
@@ -709,6 +820,7 @@ func NewTemporalEnvCommand(cctx *CommandContext, parent *TemporalCommand) *Tempo
 		s.Command.Long = "Environments manage key-value presets, auto-configuring Temporal CLI options\nfor you. You can set up distinct environments like \"dev\" and \"prod\" for\nconvenience:\n\n```\ntemporal env set \\\n    --env prod \\\n    --key address \\\n    --value production.f45a2.tmprl.cloud:7233\n```\n\nEach environment is isolated. Changes to \"prod\" presets won't affect \"dev\".\n\nFor easiest use, set a `TEMPORAL_ENV` environment variable in your shell. The\nTemporal CLI checks for an `--env` option first, then checks for the\n`TEMPORAL_ENV` environment variable. If neither is set, the CLI uses the\n\"default\" environment."
 	}
 	s.Command.Args = cobra.NoArgs
+	s.Command.Deprecated = "Use `config` subcommands instead."
 	s.Command.AddCommand(&NewTemporalEnvDeleteCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalEnvGetCommand(cctx, &s).Command)
 	s.Command.AddCommand(&NewTemporalEnvListCommand(cctx, &s).Command)
@@ -734,6 +846,7 @@ func NewTemporalEnvDeleteCommand(cctx *CommandContext, parent *TemporalEnvComman
 		s.Command.Long = "Remove a presets environment entirely _or_ remove a key-value pair within an\nenvironment. If you don't specify an environment (with `--env` or by setting\nthe `TEMPORAL_ENV` variable), this command updates the \"default\" environment:\n\n```\ntemporal env delete \\\n    --env YourEnvironment\n```\n\nor\n\n```\ntemporal env delete \\\n    --env prod \\\n    --key tls-key-path\n```"
 	}
 	s.Command.Args = cobra.MaximumNArgs(1)
+	s.Command.Deprecated = "Use `config` subcommands instead."
 	s.Command.Flags().StringVarP(&s.Key, "key", "k", "", "Property name.")
 	s.Command.Run = func(c *cobra.Command, args []string) {
 		if err := s.run(cctx, args); err != nil {
@@ -761,6 +874,7 @@ func NewTemporalEnvGetCommand(cctx *CommandContext, parent *TemporalEnvCommand) 
 		s.Command.Long = "List the properties for a given environment:\n\n```\ntemporal env get \\\n    --env YourEnvironment\n```\n\nPrint a single property:\n\n```\ntemporal env get \\\n    --env YourEnvironment \\\n    --key YourPropertyKey\n```\n\nIf you don't specify an environment (with `--env` or by setting the\n`TEMPORAL_ENV` variable), this command lists properties of the \"default\"\nenvironment."
 	}
 	s.Command.Args = cobra.MaximumNArgs(1)
+	s.Command.Deprecated = "Use `config` subcommands instead."
 	s.Command.Flags().StringVarP(&s.Key, "key", "k", "", "Property name.")
 	s.Command.Run = func(c *cobra.Command, args []string) {
 		if err := s.run(cctx, args); err != nil {
@@ -785,6 +899,7 @@ func NewTemporalEnvListCommand(cctx *CommandContext, parent *TemporalEnvCommand)
 	s.Command.Args = cobra.NoArgs
 	s.Command.Annotations = make(map[string]string)
 	s.Command.Annotations["ignoresMissingEnv"] = "true"
+	s.Command.Deprecated = "Use `config` subcommands instead."
 	s.Command.Run = func(c *cobra.Command, args []string) {
 		if err := s.run(cctx, args); err != nil {
 			cctx.Options.Fail(err)
@@ -814,6 +929,7 @@ func NewTemporalEnvSetCommand(cctx *CommandContext, parent *TemporalEnvCommand) 
 	s.Command.Args = cobra.MaximumNArgs(2)
 	s.Command.Annotations = make(map[string]string)
 	s.Command.Annotations["ignoresMissingEnv"] = "true"
+	s.Command.Deprecated = "Use `config` subcommands instead."
 	s.Command.Flags().StringVarP(&s.Key, "key", "k", "", "Property name (required).")
 	s.Command.Flags().StringVarP(&s.Value, "value", "v", "", "Property value (required).")
 	s.Command.Run = func(c *cobra.Command, args []string) {
@@ -2816,7 +2932,8 @@ func NewTemporalWorkflowResetCommand(cctx *CommandContext, parent *TemporalWorkf
 	s.Command.Flags().StringVar(&s.Reason, "reason", "", "Reason for reset. Required.")
 	_ = cobra.MarkFlagRequired(s.Command.Flags(), "reason")
 	s.ReapplyType = NewStringEnum([]string{"All", "Signal", "None"}, "All")
-	s.Command.Flags().Var(&s.ReapplyType, "reapply-type", "Types of events to re-apply after reset point. Deprecated. Use --reapply-exclude instead. Accepted values: All, Signal, None.")
+	s.Command.Flags().Var(&s.ReapplyType, "reapply-type", "Types of events to re-apply after reset point. Accepted values: All, Signal, None.")
+	_ = s.Command.Flags().MarkDeprecated("reapply-type", "Use --reapply-exclude instead.")
 	s.ReapplyExclude = NewStringEnumArray([]string{"All", "Signal", "Update"}, []string{})
 	s.Command.Flags().Var(&s.ReapplyExclude, "reapply-exclude", "Exclude these event types from re-application. Accepted values: All, Signal, Update.")
 	s.Type = NewStringEnum([]string{"FirstWorkflowTask", "LastWorkflowTask", "LastContinuedAsNew", "BuildId"}, "")
